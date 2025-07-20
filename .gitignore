@@ -135,7 +135,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .envrc
 .venv
 env/
@@ -143,6 +142,10 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+test_things/database_test
+test_things/full_test
+test_things/schema_tests
 
 # Spyder project settings
 .spyderproject
@@ -205,3 +208,4 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
