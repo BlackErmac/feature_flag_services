@@ -1,12 +1,20 @@
-from redis.asyncio import Redis
-from fastapi import Depends
+import redis.asyncio as redis
+import json
+from typing import Optional
 import os
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+class RedisCache:
+    def __init__(self):
+        self.client = redis.from_url(os.getenv("REDIS_URL"))
 
-async def get_redis():
-    redis = Redis.from_url(REDIS_URL, decode_responses=True)
-    try:
-        yield redis
-    finally:
-        await redis.close()
+    async def get_flag(self, name: str) -> Optional[dict]:
+        data = await self.client.get(f"flag:{name}")
+        return json.loads(data) if data else None
+
+    async def set_flag(self, name: str, data: dict):
+        await self.client.set(f"flag:{name}", json.dumps(data))
+
+    async def delete_flag(self, name: str):
+        await self.client.delete(f"flag:{name}")
+
+redis_cache = RedisCache()

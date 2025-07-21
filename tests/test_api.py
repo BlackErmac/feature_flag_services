@@ -1,115 +1,84 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from app.main import app
-from app import models, database
-from redis.asyncio import Redis
-import asyncio
-import json
-
-DATABASE_URL = "postgresql+asyncpg://user:password@localhost:5432/feature_flags_test"
-REDIS_URL = "redis://localhost:6379"
-
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-@pytest.fixture(scope="function")
-async def db_session():
-    async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.drop_all)
-        await conn.run_sync(models.Base.metadata.create_all)
-    async with AsyncSessionLocal() as session:
-        yield session
-    async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.drop_all)
-
-@pytest.fixture(scope="function")
-async def redis():
-    redis = Redis.from_url(REDIS_URL, decode_responses=True)
-    await redis.flushdb()
-    yield redis
-    await redis.close()
+from app.database import AsyncSessionLocal, engine
+from app.models import Base
+from sqlalchemy import delete
 
 @pytest.fixture
-def client(db_session, redis):
-    return TestClient(app)
+async def client():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield TestClient(app)
 
 @pytest.mark.asyncio
-async def test_create_flag(client, redis):
-    response = client.post("/flags/", json={"name": "auth_v2", "dependencies": []})
+async def test_create_flag(client):
+    response = client.post("/flags", json={
+        "name": "test_flag",
+        "actor": "test_user",
+        "reason": "Initial creation"
+    })
     assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "auth_v2"
-    assert data["enabled"] is False
-    
-    # Verify cache
-    cached = await redis.get(f"flag:auth_v2")
-    assert cached is not None
-    assert json.loads(cached)["name"] == "auth_v2"
+    assert response.json()["name"] == "test_flag"
+    assert response.json()["is_enabled"] is False
 
 @pytest.mark.asyncio
-async def test_create_flag_with_dependencies(client, redis):
-    client.post("/flags/", json={"name": "auth_v2", "dependencies": []})
-    response = client.post("/flags/", json={"name": "checkout_v2", "dependencies": ["auth_v2"]})
+async def test_create_flag_with_dependencies(client):
+    # Create dependency flag
+    client.post("/flags", json={"name": "dep_flag", "actor": "test_user"})
+    
+    response = client.post("/flags", json={
+        "name": "test_flag",
+        "dependencies": ["dep_flag"],
+        "actor": "test_user"
+    })
     assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "checkout_v2"
-    assert data["dependencies"] == ["auth_v2"]
-    
-    # Verify cache
-    cached = await redis.get(f"flag:checkout_v2")
-    assert cached is not None
-    assert json.loads(cached)["dependencies"] == ["auth_v2"]
+    assert response.json()["dependencies"] == ["dep_flag"]
 
 @pytest.mark.asyncio
-async def test_create_circular_dependency(client):
-    client.post("/flags/", json={"name": "flag_a", "dependencies": ["flag_b"]})
-    response = client.post("/flags/", json={"name": "flag_b", "dependencies": ["flag_a"]})
+async def test_circular_dependency(client):
+    client.post("/flags", json={"name": "flag_a", "dependencies": ["flag_b"], "actor": "test_user"})
+    response = client.post("/flags", json={"name": "flag_b", "dependencies": ["flag_a"], "actor": "test_user"})
     assert response.status_code == 400
     assert "Circular dependency detected" in response.json()["detail"]
 
 @pytest.mark.asyncio
-async def test_toggle_flag_missing_dependency(client, redis):
-    client.post("/flags/", json={"name": "auth_v2", "dependencies": []})
-    client.post("/flags/", json={"name": "checkout_v2", "dependencies": ["auth_v2"]})
-    response = client.patch("/flags/checkout_v2/toggle", json={"enabled": True})
+async def test_enable_flag_with_missing_dependency(client):
+    client.post("/flags", json={"name": "dep_flag", "actor": "test_user"})
+    client.post("/flags", json={"name": "test_flag", "dependencies": ["dep_flag"], "actor": "test_user"})
+    
+    response = client.put("/flags/test_flag", json={"is_enabled": True, "actor": "test_user"})
     assert response.status_code == 400
     assert "Missing active dependencies" in response.json()["detail"]
-    assert response.json()["missing_dependencies"] == ["auth_v2"]
 
 @pytest.mark.asyncio
-async def test_cascading_disable(client, redis):
-    client.post("/flags/", json={"name": "auth_v2", "dependencies": []})
-    client.post("/flags/", json={"name": "checkout_v2", "dependencies": ["auth_v2"]})
-    client.patch("/flags/auth_v2/toggle", json={"enabled": True})
-    client.patch("/flags/checkout_v2/toggle", json={"enabled": True})
+async def test_cascade_disable(client):
+    # Create flags
+    client.post("/flags", json={"name": "dep_flag", "actor": "test_user"})
+    client.post("/flags", json={"name": "test_flag", "dependencies": ["dep_flag"], "actor": "test_user"})
     
-    # Disable auth_v2, should cascade to checkout_v2
-    client.patch("/flags/auth_v2/toggle", json={"enabled": False})
+    # Enable both flags
+    client.put("/flags/dep_flag", json={"is_enabled": True, "actor": "test_user"})
+    client.put("/flags/test_flag", json={"is_enabled": True, "actor": "test_user"})
     
-    response = client.get("/flags/checkout_v2")
+    # Disable dependency
+    client.put("/flags/dep_flag", json={"is_enabled": False, "actor": "test_user"})
+    
+    # Check if test_flag was automatically disabled
+    response = client.get("/flags/test_flag")
     assert response.status_code == 200
-    assert response.json()["enabled"] is False
+    assert response.json()["is_enabled"] is False
     
-    # Verify cache invalidation
-    cached = await redis.get(f"flag:checkout_v2")
-    assert cached is not None
-    assert json.loads(cached)["enabled"] is False
+    # Check audit log
+    response = client.get("/flags/test_flag/audit")
+    assert any(log["action"] == "auto-disable" for log in response.json())
 
 @pytest.mark.asyncio
-async def test_audit_log(client, redis):
-    client.post("/flags/", json={"name": "auth_v2", "dependencies": []})
-    client.patch("/flags/auth_v2/toggle", json={"enabled": True}, headers={"x-actor": "test_user"})
+async def test_delete_flag_with_dependents(client):
+    client.post("/flags", json={"name": "dep_flag", "actor": "test_user"})
+    client.post("/flags", json={"name": "test_flag", "dependencies": ["dep_flag"], "actor": "test_user"})
     
-    response = client.get("/audit-logs/")
-    assert response.status_code == 200
-    logs = response.json()
-    assert len(logs) >= 2  # Create and toggle
-    assert any(log["action"] == "create" and log["flag_name"] == "auth_v2" for log in logs)
-    assert any(log["action"] == "enable" and log["actor"] == "test_user" for log in logs)
-    
-    # Verify cache
-    cached = await redis.get("audit_logs")
-    assert cached is not None
-    assert len(json.loads(cached)) >= 2
+    response = client.delete("/flags/dep_flag?actor=test_user")
+    assert response.status_code == 400
+    assert "Cannot delete flag with dependent flags" in response.json()["detail"]

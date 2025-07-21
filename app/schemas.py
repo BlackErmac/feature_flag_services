@@ -1,40 +1,32 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List , Optional
 from datetime import datetime
 
 class Message(BaseModel):
     message : str
-
-class FeatureFlagBase(BaseModel):
+        
+class FlagCreate(BaseModel):
     name: str
     dependencies: List[str] = []
+    actor: str
+    reason: Optional[str] = None
 
-class FeatureFlagCreate(FeatureFlagBase):
-    pass
+class FlagUpdate(BaseModel):
+    is_enabled: Optional[bool] = None
+    dependencies: Optional[List[str]] = None
+    actor: str
+    reason: Optional[str] = None
 
-class FeatureFlagUpdate(FeatureFlagBase):
-    pass
-
-class FeatureFlag(FeatureFlagBase):
+class FlagResponse(BaseModel):
     id: int
-    enabled: bool
-    
-    class Config:
-        from_attributes = True
-        orm_mode = True
+    name: str
+    is_enabled: bool
+    dependencies: List[str]
 
-
-class FeatureFlagToggle(BaseModel):
-    enabled: bool
-
-class AuditLog(BaseModel):
+class AuditLogResponse(BaseModel):
     id: int
     flag_name: str
     action: str
     actor: str
-    reason: str
+    reason: Optional[str]
     timestamp: datetime
-    
-    class Config:
-        from_attributes = True
-        orm_mode = True
