@@ -12,9 +12,11 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 async def init_db():
     async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.drop_all)
         await conn.run_sync(models.Base.metadata.create_all)
     # SQLModel.metadata.create_all(engine)
-
+    await engine.dispose()
+    
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session

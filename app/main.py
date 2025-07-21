@@ -1,8 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-from . import models, schemas, crud, database, dependencies
-from .redis_client import get_redis, Redis
+from . import  database
 from app.router import flags
 
 app = FastAPI(title="Feature Flag Service")

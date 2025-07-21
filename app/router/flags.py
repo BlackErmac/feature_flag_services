@@ -71,6 +71,18 @@ async def get_flag(flag_name: str, db: AsyncSession = Depends(get_db)):
     
     return FlagResponse(**flag.__dict__)
 
+@router.get("/", response_model=List[FlagResponse])
+async def get_flags(db: AsyncSession = Depends(get_db)):
+
+    result = await db.execute(select(FeatureFlag))
+    flags = result.scalars().all()
+    if not flags:
+        raise HTTPException(status_code=404, detail="cant find any flags")
+    
+    return [FlagResponse(**flag.__dict__) for flag in flags]
+
+
+
 @router.put("/{flag_name}", response_model=FlagResponse)
 async def update_flag(flag_name: str, flag_update: FlagUpdate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(FeatureFlag).where(FeatureFlag.name == flag_name))
@@ -143,7 +155,7 @@ async def delete_flag(flag_name: str, actor: str, reason: Optional[str] = None, 
     db.add(audit_log)
     await db.commit()
     
-    return {"message": "Flag deleted successfully"}
+    return {"message": f"Flag <{flag_name}> deleted successfully"}
 
 @router.get("/{flag_name}/audit", response_model=List[AuditLogResponse])
 async def get_audit_logs(flag_name: str, db: AsyncSession = Depends(get_db)):

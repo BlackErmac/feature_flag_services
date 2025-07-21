@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import List, Set
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy.future import select
 from fastapi import HTTPException
 from app.models import FeatureFlag, AuditLog
 from app.redis_client import redis_cache
@@ -25,8 +25,9 @@ async def dfs(node: str, visited: Set[str], rec_stack: Set[str], all_flags: dict
 async def detect_circular_dependencies(db: AsyncSession, flag_name: str, dependencies: List[str], is_update: bool = False) -> None:
     # Fetch all flags using ORM
     result = await db.execute(select(FeatureFlag.name, FeatureFlag.dependencies))
-    all_flags = {flag.name: {"dependencies": flag.dependencies} for flag in result.scalars().all()}
-    
+    # print(result , result.all() , "))))))))))))))))))))))))")
+    all_flags = {name: {"dependencies": dependencies} for name , dependencies in result.all()}
+    # print(all_flags , "000000000000000000000")
     # For updates, we need to consider the new dependencies
     if is_update:
         all_flags[flag_name]["dependencies"] = dependencies
